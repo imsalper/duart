@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>DuArt — Akıllı Duvar & Tavan Renk Simülatörü | AI & AR</title>
+  <meta name="description" content="Odanızın fotoğrafını veya videosunu yükleyin; duvarlarınızı RAL renk kartelası ve trend iç cephe renkleriyle doğal ışık ve gölgeleri koruyarak canlı görün.">
+  <meta name="theme-color" content="#0a0e17">
+
+  <!-- Open Graph / SEO -->
+  <meta property="og:title" content="DuArt — Akıllı Duvar & Tavan Renk Simülatörü">
+  <meta property="og:description" content="Evinizin fotoğrafını veya videosunu yükleyin, duvarlarınızı istediğiniz RAL renginde doğal ışığıyla anında görün.">
+  <meta property="og:type" content="website">
+
+  <!-- Favicon & Touch Icon -->
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <meta property="og:image" content="icon.png">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <span class="logo-icon">🎨</span>
+          <div class="logo-text">
+            <span class="logo-title">DuArt<span class="logo-dot">.</span></span>
+            <span class="logo-sub">AI & AR WALL COLOR VISUALIZER</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <!-- Quick Sample Room Selector -->
+        <div class="demo-rooms-bar">
+          <span class="demo-rooms-label">💡 Örnek Odalar:</span>
+          <button type="button" class="btn-demo-room active" onclick="loadDemoRoom('livingRoom')">🛋️ Salon</button>
+          <button type="button" class="btn-demo-room" onclick="loadDemoRoom('bedroom')">🛏️ Yatak Odası</button>
+          <button type="button" class="btn-demo-room" onclick="loadDemoRoom('kitchen')">🍽️ Mutfak</button>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button type="button" class="btn-header-action" onclick="toggleInfoModal()" title="Nasıl Çalışır?">
+          <span>ℹ️ Nasıl Çalışır?</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Studio Workspace -->
+    <main class="studio-main">
+
+      <!-- =======================================================
+           HERO: 2 KOCAMAN BUTON (FOTOĞRAF EKLE & VİDEO EKLE)
+           ======================================================= -->
+      <section class="hero-actions-section" id="hero-actions-box">
+        <div class="hero-header-text">
+          <h1 class="hero-headline">Evinizin Duvarlarını Yeni Renginde Görün</h1>
+          <p class="hero-subtitle">Fotoğraf veya video yükleyin; odanızın ışık ve gölgelerini bozmadan, dilediğiniz RAL rengini saniyeler içinde uygulayın.</p>
+        </div>
+
+        <div class="giant-buttons-grid">
+          <!-- Giant Button 1: FOTOĞRAF EKLE (100% Direct Native File Overlay) -->
+          <div class="giant-btn-card photo-card" id="card-upload-photo">
+            <input type="file" id="input-photo-upload" accept="image/*" class="direct-overlay-input" onchange="handlePhotoUpload(event)" title="Fotoğraf Yükle veya Çek">
+            <div class="giant-btn-content">
+              <div class="giant-icon-wrapper">
+                <span class="giant-icon">📸</span>
+                <span class="giant-badge">EN POPÜLER</span>
+              </div>
+              <div class="giant-title">Fotoğraf Ekle / Çek</div>
+              <div class="giant-desc">Telefon kamerasıyla odayı çekin veya galeriden fotoğraf yükleyin. Duvarlar anında seçtiğiniz renge boyansın.</div>
+              <div class="giant-cta">
+                <span>📁 Fotoğraf Seç veya Çek</span>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Giant Button 2: VİDEO / CANLI KAMERA -->
+          <div class="giant-btn-card video-card" id="card-upload-video" onclick="openVideoOptions()">
+            <div class="giant-btn-content">
+              <div class="giant-icon-wrapper">
+                <span class="giant-icon">🎥</span>
+                <span class="giant-badge live-badge">CANLI AR</span>
+              </div>
+              <div class="giant-title">Video Ekle / Canlı Kamera</div>
+              <div class="giant-desc">Kameranızı odaya tutarak gezin veya oda videosu yükleyin. Duvarlar canlı olarak seçilen renkte kalsın.</div>
+              <div class="giant-cta live-cta">
+                <span>🔴 Canlı Kamera Aç / Video Yükle</span>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hidden Video File Input -->
+      <input type="file" id="input-video-upload" accept="video/*" class="visually-hidden" onchange="handleVideoUpload(event)">
+
+      <!-- =======================================================
+           VISUALIZER CANVAS STAGE (BEFORE / AFTER & LIVE AR)
+           ======================================================= -->
+      <section class="visualizer-stage-section" id="visualizer-stage">
+        
+        <!-- Stage Toolbar Header -->
+        <div class="stage-toolbar">
+          <div class="toolbar-left">
+            <div class="active-mode-badge" id="stage-mode-badge">
+              <span class="pulse-dot"></span>
+              <span id="badge-mode-text">📸 Fotoğraf Modu (Canlı Önizleme)</span>
+            </div>
+
+            <!-- Paint Mode Selector -->
+            <div class="paint-target-tabs">
+              <button type="button" class="target-tab active" data-target="all" onclick="setPaintTarget('all')">Tüm Duvarlar</button>
+              <button type="button" class="target-tab" data-target="accent" onclick="setPaintTarget('accent')">Tek Duvar (Vurgu)</button>
+              <button type="button" class="target-tab" data-target="tap" onclick="setPaintTarget('tap')">🎯 Dokun-Boya</button>
+            </div>
+          </div>
+
+          <div class="toolbar-right">
+            <button type="button" class="stage-tool-btn" onclick="resetToOriginal()" title="Orijinal Renge Dön">
+              <span>↺ Orijinal</span>
+            </button>
+            <button type="button" class="stage-tool-btn" onclick="toggleSplitComparison()" id="btn-toggle-split" title="Öncesi / Sonrası Karşılaştırma">
+              <span>⚡ Öncesi/Sonrası</span>
+            </button>
+            <button type="button" class="stage-tool-btn primary-glow" onclick="downloadPaintedPhoto()" title="Yüksek Kalitede İndir">
+              <span>💾 Kaydet</span>
+            </button>
+            <button type="button" class="stage-tool-btn share-whatsapp" onclick="shareOnWhatsApp()" title="WhatsApp'ta Paylaş">
+              <span>💬 Paylaş</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Stage Viewport Container -->
+        <div class="canvas-viewport" id="canvas-viewport">
+          
+          <!-- Loading Overlay -->
+          <div class="viewport-loader" id="viewport-loader" style="display: none;">
+            <div class="loader-spinner"></div>
+            <div class="loader-text" id="loader-status-text">Yapay zeka duvarları analiz ediyor...</div>
+          </div>
+
+          <!-- PHOTO VISUALIZER: Before / After Split Slider Container -->
+          <div class="photo-visualizer-box" id="photo-visualizer-box">
+            <!-- Background Original Image -->
+            <img id="img-original" class="visualizer-img img-original" alt="Orijinal Oda">
+
+            <!-- Foreground Painted Canvas wrapped in clip-path for Split Slider -->
+            <div class="split-clipped-wrapper" id="split-clipped-wrapper">
+              <canvas id="canvas-painted" class="visualizer-canvas"></canvas>
+            </div>
+
+            <!-- Draggable Split Divider Line & Handle -->
+            <div class="split-slider-divider" id="split-slider-divider">
+              <div class="split-slider-line"></div>
+              <div class="split-slider-handle">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg>
+              </div>
+            </div>
+
+            <!-- Before & After Badges -->
+            <div class="split-badge badge-before">ÖNCESİ</div>
+            <div class="split-badge badge-after">SONRASI (DUART)</div>
+
+            <!-- Tap to Paint Interactive Helper Hint -->
+            <div class="tap-hint-pill" id="tap-hint-pill" style="display: none;">
+              🎯 Boyamak istediğiniz duvara veya tavana dokunun
+            </div>
+          </div>
+
+          <!-- VIDEO / LIVE AR VISUALIZER CONTAINER -->
+          <div class="video-visualizer-box" id="video-visualizer-box" style="display: none;">
+            <video id="video-source" playsinline muted loop style="display: none;"></video>
+            <canvas id="canvas-video-painted" class="visualizer-canvas"></canvas>
+            <div class="video-controls-overlay">
+              <button type="button" class="btn-video-control" id="btn-video-play-pause" onclick="toggleVideoPlayback()">⏸️ Duraklat</button>
+              <button type="button" class="btn-video-control" onclick="switchCameraFacing()">🔄 Kamera Değiştir</button>
+              <button type="button" class="btn-video-control close-video" onclick="closeVideoMode()">✕ Fotoğrafa Dön</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Selected Color Summary Banner -->
+        <div class="selected-color-bar">
+          <div class="color-badge-swatch" id="bar-swatch" style="background-color: #38424b;"></div>
+          <div class="color-badge-info">
+            <div class="color-badge-code" id="bar-color-code">RAL 7016</div>
+            <div class="color-badge-name" id="bar-color-name">Antrasit Gri (Anthracite Grey)</div>
+          </div>
+          <div class="color-badge-finish">
+            <span class="finish-pill">İpeksi Mat</span>
+            <span class="finish-pill">2 Kat Önerilir</span>
+          </div>
+          <div class="color-badge-action">
+            <button type="button" class="btn-mini-calc" onclick="openRenomateCalc()">
+              <span>📐 RenoMate ile Malzeme Hesapla →</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- =======================================================
+           RAL COLOR PALETTE & TREND PAINT CATALOG
+           ======================================================= -->
+      <section class="palette-dock-section" id="palette-section">
+        <div class="palette-header">
+          <div class="palette-title-group">
+            <h2 class="palette-title">🎨 Duvar Renk Kartelası</h2>
+            <div class="palette-sub">RAL Classic resmi kodları ve trend iç cephe renkleri</div>
+          </div>
+
+          <!-- Search & Filter Controls -->
+          <div class="palette-controls">
+            <div class="palette-search-box">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="input-color-search" placeholder="Renk ara... (Örn: 7016, Kumtaşı, Beyaz)" oninput="filterPalette(this.value)">
+            </div>
+          </div>
+        </div>
+
+        <!-- Palette Filter Categories -->
+        <div class="palette-category-tabs">
+          <button type="button" class="palette-cat-btn active" data-cat="all" onclick="filterCategory('all', this)">Tüm Renkler (<span id="count-all-colors">0</span>)</button>
+          <button type="button" class="palette-cat-btn" data-cat="trend" onclick="filterCategory('trend', this)">🌟 Trend Renkler</button>
+          <button type="button" class="palette-cat-btn" data-cat="ral" onclick="filterCategory('ral', this)">🏷️ RAL Klasik</button>
+          <button type="button" class="palette-cat-btn" data-cat="white" onclick="filterCategory('white', this)">🤍 Beyaz & Fildişi</button>
+          <button type="button" class="palette-cat-btn" data-cat="grey" onclick="filterCategory('grey', this)">🏙️ Gri & Antrasit</button>
+          <button type="button" class="palette-cat-btn" data-cat="earth" onclick="filterCategory('earth', this)">🌿 Bej & Toprak</button>
+          <button type="button" class="palette-cat-btn" data-cat="accent" onclick="filterCategory('accent', this)">💎 Mavi & Yeşil & Vurgu</button>
+        </div>
+
+        <!-- Colors Grid Container -->
+        <div class="palette-swatches-grid" id="palette-swatches-grid">
+          <!-- Dynamic Swatch Cards Rendered by JS -->
+        </div>
+      </section>
+
+      <!-- =======================================================
+           PAINT ESTIMATION & CONTRACTOR CALLOUT CARD
+           ======================================================= -->
+      <section class="estimation-callout-card">
+        <div class="callout-content">
+          <div class="callout-icon">🔨</div>
+          <div>
+            <h3 class="callout-title">Rengi Beğendiniz mi? Ustalardan Teklif Alın!</h3>
+            <p class="callout-desc">Seçtiğiniz <strong id="callout-selected-name" style="color: var(--accent-gold);">RAL 7016 Antrasit Gri</strong> rengini evinizde uygulatmak için RenoMate üzerinden anında metraj hesabı yapabilir ve doğrulanmış boyacı ustalarından ücretsiz fiyat teklifi toplayabilirsiniz.</p>
+          </div>
+        </div>
+        <button type="button" class="btn-callout-action" onclick="openRenomateCalc()">
+          <span>🔨 Boyacı Teklifi İste →</span>
+        </button>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <span class="logo-icon">🎨</span>
+          <strong>DuArt.</strong> — Akıllı Duvar & Tavan Renk Simülatörü
+        </div>
+        <div class="footer-note">Doğal ışık ve gölgeleri koruyan istemci taraflı yapay zeka & AR renklendirme motoru.</div>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 DuArt & RenoMate • Alper GÜLEN</span>
+      </div>
+    </footer>
+
+    <!-- Video Selection Modal -->
+    <div class="modal-overlay" id="modal-video-options" onclick="if(event.target===this) closeVideoOptions()">
+      <div class="modal-dialog">
+        <button type="button" class="modal-close-btn" onclick="closeVideoOptions()">✕</button>
+        <div class="modal-header">
+          <span class="modal-icon">🎥</span>
+          <h3 class="modal-title">Video veya Canlı Kamera Seçin</h3>
+          <p class="modal-sub">Duvarlarınızı video ortamında canlı renkleriyle deneyimleyin.</p>
+        </div>
+        <div class="modal-options-grid">
+          <button type="button" class="modal-opt-card" onclick="startLiveCameraStream()">
+            <span class="opt-icon">📱</span>
+            <div class="opt-title">Canlı Kamera (AR)</div>
+            <div class="opt-desc">Odanızı kamerayla canlı tarayın, duvarlar seçtiğiniz renkte kalsın.</div>
+          </button>
+          <label class="modal-opt-card" style="cursor: pointer;">
+            <input type="file" accept="video/*" class="visually-hidden" onchange="handleVideoUpload(event); closeVideoOptions();">
+            <span class="opt-icon">📁</span>
+            <div class="opt-title">Oda Videosu Yükle</div>
+            <div class="opt-desc">Telefonunuzla çektiğiniz oda videosunu yükleyin, renklendirilmiş halini izleyin.</div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Info / How it Works Modal -->
+    <div class="modal-overlay" id="modal-info" onclick="if(event.target===this) toggleInfoModal()">
+      <div class="modal-dialog info-dialog">
+        <button type="button" class="modal-close-btn" onclick="toggleInfoModal()">✕</button>
+        <div class="modal-header">
+          <span class="modal-icon">💡</span>
+          <h3 class="modal-title">DuArt Nasıl Çalışır?</h3>
+          <p class="modal-sub">Doğal duvar boyama teknolojisinin arkasındaki sır</p>
+        </div>
+        <div class="info-content-body">
+          <div class="info-step">
+            <div class="step-num">1</div>
+            <div>
+              <strong>📸 Fotoğraf veya Video Ekleyin:</strong>
+              <p>Odanızı aydınlık bir saatte çekin. Kapı, pencere veya mobilyalarınızı kaldırmanıza gerek yoktur.</p>
+            </div>
+          </div>
+          <div class="info-step">
+            <div class="step-num">2</div>
+            <div>
+              <strong>🎨 RAL veya Trend Renk Seçin:</strong>
+              <p>Alt karteladan dilediğiniz RAL kodunu veya popüler iç cephe rengini seçin.</p>
+            </div>
+          </div>
+          <div class="info-step">
+            <div class="step-num">3</div>
+            <div>
+              <strong>☀️ Doğal Işık & Gölge Korunur:</strong>
+              <p>Piksel parlaklık haritası (luminance) sayesinde avizenin parıltısı, gün ışığı ve köşe gölgeleri aynen korunur. Duvar karton gibi yapay görünmez.</p>
+            </div>
+          </div>
+          <div class="info-step">
+            <div class="step-num">4</div>
+            <div>
+              <strong>⚡ Öncesi / Sonrası Karşılaştırın:</strong>
+              <p>Ekrandaki kaydırıcı çubuğu parmağınızla sağa-sola çekerek eski haliyle yeni rengi kıyaslayın.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast-notification" id="toast-notif">
+      <span class="toast-icon">✓</span>
+      <span class="toast-msg" id="toast-msg">İşlem tamamlandı</span>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
