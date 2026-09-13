@@ -117,14 +117,21 @@
           <div class="toolbar-left">
             <div class="active-mode-badge" id="stage-mode-badge">
               <span class="pulse-dot"></span>
-              <span id="badge-mode-text">📸 Fotoğraf Modu (Canlı Önizleme)</span>
+              <span id="badge-mode-text">📸 Fotoğraf Modu</span>
             </div>
 
             <!-- Paint Mode Selector -->
             <div class="paint-target-tabs">
-              <button type="button" class="target-tab active" data-target="all" onclick="setPaintTarget('all')">Tüm Duvarlar</button>
-              <button type="button" class="target-tab" data-target="accent" onclick="setPaintTarget('accent')">Tek Duvar (Vurgu)</button>
-              <button type="button" class="target-tab" data-target="tap" onclick="setPaintTarget('tap')">🎯 Dokun-Boya</button>
+              <button type="button" class="target-tab active" id="tab-mode-tap" data-target="tap" onclick="setPaintTarget('tap')" title="Resimde boyamak istediğiniz duvara dokunun">🎯 Tıkla-Boya (Duvara Dokun)</button>
+              <button type="button" class="target-tab" id="tab-mode-auto" data-target="auto" onclick="setPaintTarget('auto')" title="Odadaki duvarları otomatik algılar ve boyar">🪄 Otomatik Duvar</button>
+              <button type="button" class="target-tab" onclick="clearPaintedWalls()" title="Boyanmış duvarları sıfırlar">🧹 Temizle</button>
+            </div>
+
+            <!-- Tolerance Slider -->
+            <div class="tolerance-wrapper" title="Boya yayılma hassasiyeti">
+              <span class="tolerance-label">Hassasiyet:</span>
+              <input type="range" id="tolerance-slider" min="15" max="65" value="38" oninput="updateTolerance(this.value)" class="custom-range-slider">
+              <span id="tolerance-val" class="tolerance-val">38</span>
             </div>
           </div>
 
@@ -163,6 +170,9 @@
               <canvas id="canvas-painted" class="visualizer-canvas"></canvas>
             </div>
 
+            <!-- Interactive Direct Tap Layer for Precise Wall Selection -->
+            <div class="interactive-tap-layer" id="interactive-tap-layer" onclick="handleTapOnWall(event)"></div>
+
             <!-- Draggable Split Divider Line & Handle -->
             <div class="split-slider-divider" id="split-slider-divider">
               <div class="split-slider-line"></div>
@@ -176,8 +186,8 @@
             <div class="split-badge badge-after">SONRASI (DUART)</div>
 
             <!-- Tap to Paint Interactive Helper Hint -->
-            <div class="tap-hint-pill" id="tap-hint-pill" style="display: none;">
-              🎯 Boyamak istediğiniz duvara veya tavana dokunun
+            <div class="tap-hint-pill" id="tap-hint-pill">
+              🎯 Boyamak istediğiniz duvara veya tavana dokunun (Eşyalar boyanmaz)
             </div>
           </div>
 

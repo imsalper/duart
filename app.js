@@ -226,10 +226,13 @@ let isVideoPlaying = false;
 let cameraFacingMode = 'environment';
 let animationFrameId = null;
 
-// Offscreen Canvas Cache
+// Offscreen Canvas Cache & Wall Segmentation Masks
 let offscreenCanvas = null;
 let offscreenCtx = null;
 let originalImageData = null;
+let activeWallMask = null;       // Uint8Array (w * h) for wall opacity 0 - 255
+let currentImageEdges = null;    // Uint8Array (w * h) for edge gradients
+let currentTolerance = 38;       // Sensitivity threshold (15 - 65)
 
 // ==========================================================================
 // 4. Initialization
@@ -409,124 +412,293 @@ function loadPhotoSource(src) {
     offscreenCtx.drawImage(img, 0, 0, w, h);
     originalImageData = offscreenCtx.getImageData(0, 0, w, h);
 
-    applyPaintToCanvas();
+    // Compute edge boundaries & auto-detect wall areas
+    currentImageEdges = computeEdgeMap(originalImageData, w, h);
+    autoDetectWalls();
+    renderMaskedPaint();
     hideLoader();
   };
   img.src = src;
 }
 
 // ==========================================================================
-// 8. Natural Wall Colorization & Luminance Blending Engine
+// 8. Edge-Aware Wall Segmentation & Natural Blending Engine
 // ==========================================================================
-function applyPaintToCanvas() {
+
+// Compute Sobel edge gradient map to prevent paint leaking onto furniture, frames & floors
+function computeEdgeMap(imgData, w, h) {
+  const src = imgData.data;
+  const edges = new Uint8Array(w * h);
+  const lum = new Uint8Array(w * h);
+
+  // Pre-calculate luminance
+  for (let i = 0; i < w * h; i++) {
+    const idx = i * 4;
+    lum[i] = (src[idx] * 77 + src[idx + 1] * 150 + src[idx + 2] * 29) >> 8;
+  }
+
+  // Sobel convolution for edge gradient magnitude
+  for (let y = 1; y < h - 1; y++) {
+    const rPrev = (y - 1) * w;
+    const rCurr = y * w;
+    const rNext = (y + 1) * w;
+    for (let x = 1; x < w - 1; x++) {
+      const gx = (lum[rPrev + x + 1] - lum[rPrev + x - 1]) +
+                 2 * (lum[rCurr + x + 1] - lum[rCurr + x - 1]) +
+                 (lum[rNext + x + 1] - lum[rNext + x - 1]);
+      const gy = (lum[rNext + x - 1] - lum[rPrev + x - 1]) +
+                 2 * (lum[rNext + x] - lum[rPrev + x]) +
+                 (lum[rNext + x + 1] - lum[rPrev + x + 1]);
+
+      edges[rCurr + x] = Math.min(255, (Math.abs(gx) + Math.abs(gy)) >> 2);
+    }
+  }
+  return edges;
+}
+
+// 3x3 Smoothing for anti-aliased natural paint boundaries
+function smoothMask(mask, w, h) {
+  const smoothed = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    const rPrev = (y - 1) * w;
+    const rCurr = y * w;
+    const rNext = (y + 1) * w;
+    for (let x = 1; x < w - 1; x++) {
+      const sum = mask[rPrev + x - 1] + mask[rPrev + x] + mask[rPrev + x + 1] +
+                  mask[rCurr + x - 1] + mask[rCurr + x] * 4 + mask[rCurr + x + 1] +
+                  mask[rNext + x - 1] + mask[rNext + x] + mask[rNext + x + 1];
+      smoothed[rCurr + x] = Math.round(sum / 12);
+    }
+  }
+  return smoothed;
+}
+
+// Flood Fill from point bounded by sharp edge barriers
+function floodFillFromPoint(startX, startY, tolerance, targetMask) {
+  if (!originalImageData) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+  const src = originalImageData.data;
+
+  if (!targetMask) targetMask = new Uint8Array(w * h);
+  if (!currentImageEdges) currentImageEdges = computeEdgeMap(originalImageData, w, h);
+
+  const startIdx = (startY * w + startX) * 4;
+  const seedR = src[startIdx];
+  const seedG = src[startIdx + 1];
+  const seedB = src[startIdx + 2];
+  const seedLum = (seedR * 77 + seedG * 150 + seedB * 29) >> 8;
+
+  // BFS Queue
+  const queue = new Int32Array(w * h);
+  let qStart = 0;
+  let qEnd = 0;
+
+  const visited = new Uint8Array(w * h);
+  const startPos = startY * w + startX;
+  visited[startPos] = 1;
+  targetMask[startPos] = 255;
+  queue[qEnd++] = startPos;
+
+  const maxPixels = Math.round(w * h * 0.70);
+  let filledCount = 0;
+
+  while (qStart < qEnd && filledCount < maxPixels) {
+    const curr = queue[qStart++];
+    filledCount++;
+    const cx = curr % w;
+    const cy = Math.floor(curr / w);
+
+    const neighbors = [
+      cy > 0 ? curr - w : -1,
+      cy < h - 1 ? curr + w : -1,
+      cx > 0 ? curr - 1 : -1,
+      cx < w - 1 ? curr + 1 : -1
+    ];
+
+    for (let i = 0; i < 4; i++) {
+      const n = neighbors[i];
+      if (n === -1 || visited[n]) continue;
+      visited[n] = 1;
+
+      // Stop if hitting a strong edge (window frame, sofa contour, baseboard, molding)
+      if (currentImageEdges[n] > 26) {
+        continue;
+      }
+
+      const pIdx = n * 4;
+      const r = src[pIdx];
+      const g = src[pIdx + 1];
+      const b = src[pIdx + 2];
+      const lum = (r * 77 + g * 150 + b * 29) >> 8;
+
+      const dr = r - seedR;
+      const dg = g - seedG;
+      const db = b - seedB;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+      const diffLum = Math.abs(lum - seedLum);
+
+      if (dist < tolerance * 1.85 && diffLum < tolerance * 1.5) {
+        targetMask[n] = 255;
+        queue[qEnd++] = n;
+      }
+    }
+  }
+
+  return smoothMask(targetMask, w, h);
+}
+
+// Automatically detect main wall surfaces without touching furniture, floors or windows
+function autoDetectWalls() {
+  if (!originalImageData) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+  if (!currentImageEdges) currentImageEdges = computeEdgeMap(originalImageData, w, h);
+
+  const mask = new Uint8Array(w * h);
+  const src = originalImageData.data;
+
+  // Probe candidates across upper and middle room zones
+  const candidateRows = [0.18, 0.28, 0.38, 0.48];
+  const candidateCols = [0.2, 0.35, 0.5, 0.65, 0.8];
+
+  for (let rFrac of candidateRows) {
+    const y = Math.round(h * rFrac);
+    for (let cFrac of candidateCols) {
+      const x = Math.round(w * cFrac);
+      const pos = y * w + x;
+      const idx = pos * 4;
+
+      if (mask[pos] > 80) continue; // Already covered by a wall
+      if (currentImageEdges[pos] > 18) continue; // On an edge, skip
+
+      const r = src[idx], g = src[idx + 1], b = src[idx + 2];
+      const lum = (r * 77 + g * 150 + b * 29) >> 8;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const sat = max === 0 ? 0 : (max - min) / max;
+
+      // Typical neutral light wall properties
+      if (lum > 70 && lum < 248 && sat < 0.42) {
+        floodFillFromPoint(x, y, currentTolerance, mask);
+      }
+    }
+  }
+
+  activeWallMask = smoothMask(mask, w, h);
+}
+
+// Render Painted Wall onto Canvas (ONLY Masked Wall Pixels are Touched!)
+function renderMaskedPaint() {
   const canvas = document.getElementById('canvas-painted');
-  if (!canvas || !offscreenCanvas || !originalImageData) return;
+  if (!canvas || !originalImageData || !activeWallMask) return;
 
   const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
-
-  // Clone original image data
-  const original = originalImageData;
+  const src = originalImageData.data;
   const output = ctx.createImageData(w, h);
-  const src = original.data;
   const dst = output.data;
 
-  const [pRed, pGreen, pBlue] = currentSelectedColor.rgb;
+  const [pR, pG, pB] = currentSelectedColor.rgb;
 
-  // Heuristic Wall Detection parameters
-  // Walls are generally in the upper 80% of room, low-to-mid saturation, mid-to-high lightness
-  for (let i = 0; i < src.length; i += 4) {
-    const r = src[i];
-    const g = src[i + 1];
-    const b = src[i + 2];
-    const a = src[i + 3];
+  for (let i = 0; i < w * h; i++) {
+    const pIdx = i * 4;
+    const r = src[pIdx];
+    const g = src[pIdx + 1];
+    const b = src[pIdx + 2];
+    const a = src[pIdx + 3];
 
-    const pixelIndex = i / 4;
-    const y = Math.floor(pixelIndex / w);
-    const yRatio = y / h;
+    const maskVal = activeWallMask[i];
 
-    // Calculate Luminance & Saturation
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const delta = max - min;
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
-    const normLum = luminance / 255;
-    const saturation = max === 0 ? 0 : delta / max;
-
-    // Determine if pixel is likely a wall:
-    // 1. Not pitch black or extreme shadow (L > 35)
-    // 2. Not ultra saturated colorful object (furniture/curtains: sat < 0.42)
-    // 3. If target is 'accent', only colorize right half
-    let isWallCandidate = (normLum > 0.15 && saturation < 0.48);
-
-    if (paintTarget === 'accent') {
-      const x = pixelIndex % w;
-      if (x < w * 0.45) isWallCandidate = false;
+    if (maskVal === 0) {
+      // 100% UNTOUCHED ORIGINAL PIXEL!
+      // Sofas, wooden floors, windows, paintings, lamps stay completely pristine!
+      dst[pIdx]     = r;
+      dst[pIdx + 1] = g;
+      dst[pIdx + 2] = b;
+      dst[pIdx + 3] = a;
+      continue;
     }
 
-    // Floor cutoff heuristic (bottom 25% with wood/dark saturation)
-    if (yRatio > 0.78 && (r > g && g > b)) {
-      isWallCandidate = false;
+    const alpha = maskVal / 255;
+    const origLum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+    // Realistic Reflectance: preserve natural shadows and light gradients
+    const factor = 0.35 + 0.75 * origLum;
+    let rNew = pR * factor;
+    let gNew = pG * factor;
+    let bNew = pB * factor;
+
+    // Specular Highlight Glint preservation (pencereden vuran güneş ve lamba parıltısı)
+    if (origLum > 0.82) {
+      const glint = (origLum - 0.82) / 0.18;
+      rNew = rNew * (1 - glint) + r * glint;
+      gNew = gNew * (1 - glint) + g * glint;
+      bNew = bNew * (1 - glint) + b * glint;
     }
 
-    if (isWallCandidate) {
-      // Natural Light & Texture Preservation Formula (Color Blending)
-      // Lighter areas reflect more paint color, specular highlights blend towards light
-      let factor = 0.25 + 0.75 * normLum;
-
-      let rNew = pRed * factor;
-      let gNew = pGreen * factor;
-      let bNew = pBlue * factor;
-
-      // Specular highlight preservation (windows, lamp glints remain bright)
-      if (normLum > 0.82) {
-        const hiFactor = (normLum - 0.82) / 0.18;
-        rNew = rNew * (1 - hiFactor) + r * hiFactor;
-        gNew = gNew * (1 - hiFactor) + g * hiFactor;
-        bNew = bNew * (1 - hiFactor) + b * hiFactor;
-      }
-
-      // Smooth alpha blend with original to preserve micro-grain
-      const blend = 0.94;
-      dst[i]     = Math.min(255, Math.round(rNew * blend + r * (1 - blend)));
-      dst[i + 1] = Math.min(255, Math.round(gNew * blend + g * (1 - blend)));
-      dst[i + 2] = Math.min(255, Math.round(bNew * blend + b * (1 - blend)));
-      dst[i + 3] = a;
-    } else {
-      // Unaltered non-wall pixel
-      dst[i]     = r;
-      dst[i + 1] = g;
-      dst[i + 2] = b;
-      dst[i + 3] = a;
-    }
+    // Blend into output with anti-aliased mask alpha
+    dst[pIdx]     = Math.min(255, Math.max(0, Math.round(r * (1 - alpha) + rNew * alpha)));
+    dst[pIdx + 1] = Math.min(255, Math.max(0, Math.round(g * (1 - alpha) + gNew * alpha)));
+    dst[pIdx + 2] = Math.min(255, Math.max(0, Math.round(b * (1 - alpha) + bNew * alpha)));
+    dst[pIdx + 3] = a;
   }
 
   ctx.putImageData(output, 0, 0);
 }
 
-// ==========================================================================
-// 9. Tap-to-Paint (Interactive Point Fill)
-// ==========================================================================
-function setupTapToPaint() {
-  const canvas = document.getElementById('canvas-painted');
-  if (!canvas) return;
-
-  canvas.addEventListener('click', (e) => {
-    if (paintTarget !== 'tap') return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const clickX = Math.floor((e.clientX - rect.left) * scaleX);
-    const clickY = Math.floor((e.clientY - rect.top) * scaleY);
-
-    floodFillWall(clickX, clickY);
-  });
+// Alias for compatibility
+function applyPaintToCanvas() {
+  renderMaskedPaint();
 }
 
-function floodFillWall(startX, startY) {
-  showToast("🎯 Seçilen duvar boyanıyor...");
-  applyPaintToCanvas();
+// ==========================================================================
+// 9. Interactive Tap-to-Paint & Tolerance Controls
+// ==========================================================================
+function setupTapToPaint() {
+  // Attached via #interactive-tap-layer
+}
+
+function handleTapOnWall(e) {
+  if (isVideoMode) return;
+  const canvas = document.getElementById('canvas-painted');
+  const viewport = document.getElementById('canvas-viewport');
+  if (!canvas || !viewport || !originalImageData) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+  const clickX = Math.round((clientX - rect.left) * scaleX);
+  const clickY = Math.round((clientY - rect.top) * scaleY);
+
+  if (clickX < 0 || clickX >= canvas.width || clickY < 0 || clickY >= canvas.height) return;
+
+  createTapRipple(clientX - viewport.getBoundingClientRect().left, clientY - viewport.getBoundingClientRect().top);
+
+  if (!activeWallMask) activeWallMask = new Uint8Array(canvas.width * canvas.height);
+
+  // If in 'tap' mode, flood fill from clicked point and combine
+  floodFillFromPoint(clickX, clickY, currentTolerance, activeWallMask);
+  renderMaskedPaint();
+  showToast(`🎯 Duvar seçildi ve ${currentSelectedColor.code} ile boyandı!`);
+}
+
+function createTapRipple(x, y) {
+  const box = document.getElementById('photo-visualizer-box');
+  if (!box) return;
+
+  const ripple = document.createElement('div');
+  ripple.className = 'paint-ripple';
+  ripple.style.left = `${x}px`;
+  ripple.style.top = `${y}px`;
+  ripple.style.borderColor = currentSelectedColor.hex;
+  box.appendChild(ripple);
+
+  setTimeout(() => ripple.remove(), 700);
 }
 
 function setPaintTarget(target) {
@@ -536,9 +708,30 @@ function setPaintTarget(target) {
   });
 
   const hint = document.getElementById('tap-hint-pill');
-  if (hint) hint.style.display = (target === 'tap') ? 'block' : 'none';
+  if (target === 'auto') {
+    if (hint) hint.textContent = '🪄 Odadaki tüm duvarlar otomatik algılanıp boyandı';
+    autoDetectWalls();
+    renderMaskedPaint();
+    showToast("🪄 Odadaki tüm duvarlar otomatik algılandı ve boyandı!");
+  } else if (target === 'tap') {
+    if (hint) hint.textContent = '🎯 Boyamak istediğiniz duvara veya tavana dokunun (Eşyalar boyanmaz)';
+    showToast("🎯 Resimde boyamak istediğiniz duvara dokunun");
+  }
+}
 
-  applyPaintToCanvas();
+function clearPaintedWalls() {
+  if (!canvas || !originalImageData) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+  activeWallMask = new Uint8Array(w * h);
+  renderMaskedPaint();
+  showToast("🧹 Boyanmış duvarlar sıfırlandı. İstediğiniz duvara dokunup boyayabilirsiniz.");
+}
+
+function updateTolerance(val) {
+  currentTolerance = parseInt(val, 10) || 38;
+  const valEl = document.getElementById('tolerance-val');
+  if (valEl) valEl.textContent = currentTolerance;
 }
 
 // ==========================================================================
@@ -712,22 +905,39 @@ function processVideoFrame() {
   const w = canvas.width;
   const h = canvas.height;
 
-  // Draw video frame to canvas
+  // Draw original video frame
   ctx.drawImage(video, 0, 0, w, h);
 
-  // Fast luminance overlay on top half (walls)
-  const [pRed, pGreen, pBlue] = currentSelectedColor.rgb;
-  ctx.save();
-  ctx.globalCompositeOperation = 'soft-light';
-  ctx.fillStyle = `rgb(${pRed}, ${pGreen}, ${pBlue})`;
-  // Paint upper 75% wall zone
-  ctx.fillRect(0, 0, w, h * 0.75);
+  // Fast pixel-level wall segmentation for live video (only neutral light surfaces in upper/mid room)
+  const frame = ctx.getImageData(0, 0, w, h);
+  const data = frame.data;
+  const [pR, pG, pB] = currentSelectedColor.rgb;
 
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = `rgba(${pRed}, ${pGreen}, ${pBlue}, 0.65)`;
-  ctx.fillRect(0, 0, w, h * 0.75);
-  ctx.restore();
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
 
+    const y = Math.floor((i / 4) / w);
+    // Don't paint floor (bottom 25%)
+    if (y > h * 0.75) continue;
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+
+    // Only light neutral pixels (walls)
+    if (lum > 90 && lum < 245 && sat < 0.28) {
+      const alpha = 0.85;
+      const factor = (0.3 + 0.7 * (lum / 255));
+      data[i]     = Math.round(r * (1 - alpha) + pR * factor * alpha);
+      data[i + 1] = Math.round(g * (1 - alpha) + pG * factor * alpha);
+      data[i + 2] = Math.round(b * (1 - alpha) + pB * factor * alpha);
+    }
+  }
+
+  ctx.putImageData(frame, 0, 0);
   animationFrameId = requestAnimationFrame(processVideoFrame);
 }
 
@@ -848,9 +1058,13 @@ window.selectColor = selectColor;
 window.filterCategory = filterCategory;
 window.filterPalette = filterPalette;
 window.setPaintTarget = setPaintTarget;
+window.handleTapOnWall = handleTapOnWall;
+window.clearPaintedWalls = clearPaintedWalls;
+window.updateTolerance = updateTolerance;
 window.toggleSplitComparison = toggleSplitComparison;
 window.resetToOriginal = resetToOriginal;
 window.downloadPaintedPhoto = downloadPaintedPhoto;
 window.shareOnWhatsApp = shareOnWhatsApp;
 window.openRenomateCalc = openRenomateCalc;
 window.toggleInfoModal = toggleInfoModal;
+

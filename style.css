@@ -428,6 +428,72 @@ body {
   font-weight: 800;
 }
 
+.tolerance-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+}
+
+.tolerance-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.custom-range-slider {
+  width: 70px;
+  accent-color: var(--accent-emerald);
+  cursor: pointer;
+}
+
+.tolerance-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-emerald);
+  min-width: 18px;
+}
+
+.interactive-tap-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 12;
+  cursor: crosshair;
+  background: transparent;
+}
+
+.paint-ripple {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.2);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 15px var(--accent-emerald);
+  pointer-events: none;
+  z-index: 30;
+  animation: rippleExpand 0.6s ease-out forwards;
+}
+
+@keyframes rippleExpand {
+  0% {
+    transform: translate(-50%, -50%) scale(0.2);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.8);
+    opacity: 0;
+  }
+}
+
 .stage-tool-btn {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border-glass);
