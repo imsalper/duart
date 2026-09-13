@@ -120,18 +120,34 @@
               <span id="badge-mode-text">📸 Fotoğraf Modu</span>
             </div>
 
-            <!-- Paint Mode Selector -->
-            <div class="paint-target-tabs">
-              <button type="button" class="target-tab active" id="tab-mode-tap" data-target="tap" onclick="setPaintTarget('tap')" title="Resimde boyamak istediğiniz duvara dokunun">🎯 Tıkla-Boya (Duvara Dokun)</button>
-              <button type="button" class="target-tab" id="tab-mode-auto" data-target="auto" onclick="setPaintTarget('auto')" title="Odadaki duvarları otomatik algılar ve boyar">🪄 Otomatik Duvar</button>
-              <button type="button" class="target-tab" onclick="clearPaintedWalls()" title="Boyanmış duvarları sıfırlar">🧹 Temizle</button>
+            <!-- Paint Mode Selector (Smart Wall, Box Region, Eraser & Auto) -->
+            <div class="paint-target-tabs" id="paint-tools-nav">
+              <button type="button" class="target-tab active" id="tab-tool-tap" data-tool="tap" onclick="setPaintTool('tap')" title="Resimde boyamak istediğiniz duvara dokunun">🎯 Tıkla-Boya</button>
+              <button type="button" class="target-tab" id="tab-tool-box" data-tool="box" onclick="setPaintTool('box')" title="Duvarda kutu çizerek sadece o alanı boyayın">📐 Bölge Seç (Kutu)</button>
+              <button type="button" class="target-tab" id="tab-tool-eraser" data-tool="eraser" onclick="setPaintTool('eraser')" title="Klimaya, tavana veya koltuğa dokunarak/sürterek boyayı temizleyin">🧹 Silgi (Eşya/Tavan)</button>
+              <button type="button" class="target-tab" id="tab-tool-auto" data-tool="auto" onclick="setPaintTool('auto')" title="Odadaki duvarları otomatik algılar">🪄 Otomatik</button>
+              <button type="button" class="target-tab" onclick="clearPaintedWalls()" title="Tüm boyayı temizler ve orijinal odaya döner">↺ Sıfırla</button>
+            </div>
+
+            <!-- Ceiling & Furniture Protection Toggle -->
+            <button type="button" class="ceiling-guard-btn active" id="btn-ceiling-guard" onclick="toggleCeilingGuard()" title="Tavan, pervaz ve mobilyaların boyanmasını kesin olarak engeller">
+              <span class="guard-icon">🛡️</span>
+              <span id="guard-text">Tavanı Koru: AÇIK</span>
+            </button>
+
+            <!-- Eraser Brush Size Controls (Shown when Silgi is active) -->
+            <div class="eraser-controls-group" id="eraser-controls-group" style="display: none;">
+              <span class="eraser-label">Fırça:</span>
+              <button type="button" class="btn-brush-size" data-size="15" onclick="setEraserBrushSize(15)">Küçük</button>
+              <button type="button" class="btn-brush-size active" data-size="30" onclick="setEraserBrushSize(30)">Orta</button>
+              <button type="button" class="btn-brush-size" data-size="60" onclick="setEraserBrushSize(60)">Geniş</button>
             </div>
 
             <!-- Tolerance Slider -->
-            <div class="tolerance-wrapper" title="Boya yayılma hassasiyeti">
+            <div class="tolerance-wrapper" id="tolerance-wrapper-box" title="Boya yayılma hassasiyeti">
               <span class="tolerance-label">Hassasiyet:</span>
-              <input type="range" id="tolerance-slider" min="15" max="65" value="38" oninput="updateTolerance(this.value)" class="custom-range-slider">
-              <span id="tolerance-val" class="tolerance-val">38</span>
+              <input type="range" id="tolerance-slider" min="15" max="60" value="30" oninput="updateTolerance(this.value)" class="custom-range-slider">
+              <span id="tolerance-val" class="tolerance-val">30</span>
             </div>
           </div>
 
@@ -170,8 +186,30 @@
               <canvas id="canvas-painted" class="visualizer-canvas"></canvas>
             </div>
 
-            <!-- Interactive Direct Tap Layer for Precise Wall Selection -->
-            <div class="interactive-tap-layer" id="interactive-tap-layer" onclick="handleTapOnWall(event)"></div>
+            <!-- Interactive Direct Tap/Drag Layer for Precise Wall Selection -->
+            <div class="interactive-tap-layer" id="interactive-tap-layer"></div>
+
+            <!-- Interactive Bounding Box / Region Selection Marquee -->
+            <div class="selection-marquee" id="selection-marquee" style="display: none;">
+              <div class="selection-label" id="selection-label">Seçilen Duvar Alanı</div>
+              <div class="marquee-corner c-tl"></div>
+              <div class="marquee-corner c-tr"></div>
+              <div class="marquee-corner c-bl"></div>
+              <div class="marquee-corner c-br"></div>
+            </div>
+
+            <!-- Floating Action Bubble for Region Selection -->
+            <div class="selection-action-bubble" id="selection-action-bubble" style="display: none;">
+              <button type="button" class="btn-bubble-paint" onclick="paintSelectedRegion()">
+                <span>✨ Sadece Bu Duvarı Boya</span>
+              </button>
+              <button type="button" class="btn-bubble-cancel" onclick="cancelSelection()">
+                <span>✕ İptal</span>
+              </button>
+            </div>
+
+            <!-- Custom Visual Eraser Brush Circle Cursor -->
+            <div class="eraser-cursor-circle" id="eraser-cursor-circle" style="display: none;"></div>
 
             <!-- Draggable Split Divider Line & Handle -->
             <div class="split-slider-divider" id="split-slider-divider">
@@ -185,9 +223,9 @@
             <div class="split-badge badge-before">ÖNCESİ</div>
             <div class="split-badge badge-after">SONRASI (DUART)</div>
 
-            <!-- Tap to Paint Interactive Helper Hint -->
+            <!-- Dynamic Tool Helper Hint Banner -->
             <div class="tap-hint-pill" id="tap-hint-pill">
-              🎯 Boyamak istediğiniz duvara veya tavana dokunun (Eşyalar boyanmaz)
+              🎯 Boyamak istediğiniz duvara dokunun (Klima, tavan ve koltuk otomatik korunur)
             </div>
           </div>
 

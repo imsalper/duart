@@ -426,6 +426,78 @@ body {
   color: #032015;
   background: var(--accent-emerald);
   font-weight: 800;
+  box-shadow: 0 0 12px var(--accent-emerald-glow);
+}
+
+/* Ceiling & Furniture Guard Button */
+.ceiling-guard-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid var(--accent-emerald);
+  color: var(--accent-emerald);
+  padding: 5px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.ceiling-guard-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  transform: translateY(-1px);
+}
+
+.ceiling-guard-btn.disabled {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-dim);
+}
+
+/* Eraser Brush Size Controls */
+.eraser-controls-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  animation: fadeInDown 0.25s ease;
+}
+
+.eraser-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fca5a5;
+  white-space: nowrap;
+}
+
+.btn-brush-size {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-brush-size:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.btn-brush-size.active {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
 }
 
 .tolerance-wrapper {
@@ -468,6 +540,134 @@ body {
   z-index: 12;
   cursor: crosshair;
   background: transparent;
+  user-select: none;
+  touch-action: none;
+}
+
+.interactive-tap-layer[data-tool="box"] {
+  cursor: crosshair;
+}
+
+.interactive-tap-layer[data-tool="eraser"] {
+  cursor: cell;
+}
+
+/* Interactive Bounding Box / Selection Marquee */
+.selection-marquee {
+  position: absolute;
+  border: 2px dashed #06b6d4;
+  background: rgba(6, 182, 212, 0.12);
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.35);
+  pointer-events: none;
+  z-index: 15;
+  border-radius: 4px;
+  animation: marqueeGlow 2s infinite alternate;
+}
+
+@keyframes marqueeGlow {
+  0% { border-color: #06b6d4; box-shadow: 0 0 15px rgba(6, 182, 212, 0.3); }
+  100% { border-color: #10b981; box-shadow: 0 0 24px rgba(16, 185, 129, 0.5); }
+}
+
+.selection-label {
+  position: absolute;
+  top: -26px;
+  left: 0;
+  background: rgba(6, 182, 212, 0.9);
+  color: #04202c;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.marquee-corner {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  border: 1.5px solid #06b6d4;
+  border-radius: 2px;
+}
+.c-tl { top: -4px; left: -4px; }
+.c-tr { top: -4px; right: -4px; }
+.c-bl { bottom: -4px; left: -4px; }
+.c-br { bottom: -4px; right: -4px; }
+
+/* Floating Action Bubble for Region Painting */
+.selection-action-bubble {
+  position: absolute;
+  z-index: 28;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(10, 15, 26, 0.92);
+  backdrop-filter: blur(14px);
+  padding: 8px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -100%);
+  animation: popInBubble 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  pointer-events: auto;
+}
+
+@keyframes popInBubble {
+  0% { transform: translate(-50%, -85%) scale(0.8); opacity: 0; }
+  100% { transform: translate(-50%, -120%) scale(1); opacity: 1; }
+}
+
+.btn-bubble-paint {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #032015;
+  border: none;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  box-shadow: 0 0 15px var(--accent-emerald-glow);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.btn-bubble-paint:hover {
+  transform: scale(1.04);
+  background: #10b981;
+}
+
+.btn-bubble-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-bubble-cancel:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+/* Eraser Brush Cursor Circle */
+.eraser-cursor-circle {
+  position: absolute;
+  border: 2px dashed #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 25;
+  transform: translate(-50%, -50%);
+  transition: width 0.1s ease, height 0.1s ease;
 }
 
 .paint-ripple {

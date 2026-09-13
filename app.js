@@ -214,10 +214,20 @@ const DEMO_ROOMS = {
 let currentRoomType = 'livingRoom';
 let currentPhotoSrc = null;
 let currentSelectedColor = COLOR_CATALOG.find(c => c.code === 'RAL 7016'); // Default Antrasit
-let paintTarget = 'all'; // 'all' | 'accent' | 'tap'
+let paintTarget = 'tap'; // 'tap' | 'box' | 'eraser' | 'auto'
 let currentCategory = 'all';
 let isSplitComparison = true;
 let splitPosition = 50; // Percentage 0 - 100
+
+// Selective Wall Painting & Protection Tools
+let currentPaintTool = 'tap';        // 'tap' | 'box' | 'eraser' | 'auto'
+let ceilingGuardEnabled = true;      // Prevents paint from climbing into ceilings & crown moldings
+let eraserBrushSize = 30;           // 15 | 30 | 60 px
+let selectionBox = null;             // { x1, y1, x2, y2 } in canvas space
+let isBoxSelecting = false;
+let boxDragStart = null;
+let isErasing = false;
+let lastPointerPoint = null;
 
 // Video & Stream State
 let isVideoMode = false;
@@ -232,7 +242,7 @@ let offscreenCtx = null;
 let originalImageData = null;
 let activeWallMask = null;       // Uint8Array (w * h) for wall opacity 0 - 255
 let currentImageEdges = null;    // Uint8Array (w * h) for edge gradients
-let currentTolerance = 38;       // Sensitivity threshold (15 - 65)
+let currentTolerance = 30;       // Sensitivity threshold (15 - 60) - Default tighter at 30 to prevent bleeding
 
 // ==========================================================================
 // 4. Initialization
@@ -354,7 +364,7 @@ function loadDemoRoom(roomKey) {
   if (activeBtn) activeBtn.classList.add('active');
 
   const src = DEMO_ROOMS[roomKey] || DEMO_ROOMS.livingRoom;
-  loadPhotoSource(src);
+  loadPhotoSource(src, true);
 }
 
 // ==========================================================================
@@ -364,19 +374,18 @@ function handlePhotoUpload(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
 
-  showLoader("Fotoğraf yükleniyor ve duvarlar analiz ediliyor...");
+  showLoader("Fotoğraf yükleniyor ve kenarlar analiz ediliyor...");
   const reader = new FileReader();
   reader.onload = (e) => {
-    loadPhotoSource(e.target.result);
+    loadPhotoSource(e.target.result, false); // User photo: clean original start!
     // Uncheck demo room buttons
     document.querySelectorAll('.btn-demo-room').forEach(b => b.classList.remove('active'));
-    showToast("📸 Odanız yüklendi! Seçilen renge boyandı.");
   };
   reader.readAsDataURL(file);
   event.target.value = '';
 }
 
-function loadPhotoSource(src) {
+function loadPhotoSource(src, isDemo = false) {
   currentPhotoSrc = src;
   const originalImg = document.getElementById('img-original');
   const canvas = document.getElementById('canvas-painted');
@@ -412,9 +421,23 @@ function loadPhotoSource(src) {
     offscreenCtx.drawImage(img, 0, 0, w, h);
     originalImageData = offscreenCtx.getImageData(0, 0, w, h);
 
-    // Compute edge boundaries & auto-detect wall areas
+    // Compute high-fidelity multi-channel RGB edge gradient map
     currentImageEdges = computeEdgeMap(originalImageData, w, h);
-    autoDetectWalls();
+
+    // Cancel any old selection marquee
+    cancelSelection();
+
+    if (isDemo) {
+      // For demo rooms: run auto wall detection
+      autoDetectWalls();
+      showToast(`📸 ${currentRoomType === 'kitchen' ? 'Mutfak' : 'Salon'} yüklendi!`);
+    } else {
+      // For custom user uploaded photos: keep original clean so AC, sofa and ceiling are pristine!
+      activeWallMask = new Uint8Array(w * h);
+      setPaintTool('tap');
+      showToast("📸 Odanız yüklendi! Boyamak istediğiniz duvara dokunun veya 📐 Bölge Seç ile kutu çizin.");
+    }
+
     renderMaskedPaint();
     hideLoader();
   };
@@ -422,38 +445,84 @@ function loadPhotoSource(src) {
 }
 
 // ==========================================================================
-// 8. Edge-Aware Wall Segmentation & Natural Blending Engine
+// 8. Multi-Channel Edge Detection & Sizing Engine
 // ==========================================================================
 
-// Compute Sobel edge gradient map to prevent paint leaking onto furniture, frames & floors
+// Multi-channel RGB Euclidean gradient Sobel with diagonal support
+// Detects subtle boundaries between plastic AC casings, ceiling moldings, sofa cushions and walls
 function computeEdgeMap(imgData, w, h) {
   const src = imgData.data;
   const edges = new Uint8Array(w * h);
-  const lum = new Uint8Array(w * h);
 
-  // Pre-calculate luminance
-  for (let i = 0; i < w * h; i++) {
-    const idx = i * 4;
-    lum[i] = (src[idx] * 77 + src[idx + 1] * 150 + src[idx + 2] * 29) >> 8;
-  }
-
-  // Sobel convolution for edge gradient magnitude
   for (let y = 1; y < h - 1; y++) {
     const rPrev = (y - 1) * w;
     const rCurr = y * w;
     const rNext = (y + 1) * w;
-    for (let x = 1; x < w - 1; x++) {
-      const gx = (lum[rPrev + x + 1] - lum[rPrev + x - 1]) +
-                 2 * (lum[rCurr + x + 1] - lum[rCurr + x - 1]) +
-                 (lum[rNext + x + 1] - lum[rNext + x - 1]);
-      const gy = (lum[rNext + x - 1] - lum[rPrev + x - 1]) +
-                 2 * (lum[rNext + x] - lum[rPrev + x]) +
-                 (lum[rNext + x + 1] - lum[rPrev + x + 1]);
 
-      edges[rCurr + x] = Math.min(255, (Math.abs(gx) + Math.abs(gy)) >> 2);
+    for (let x = 1; x < w - 1; x++) {
+      const pPrev = (rCurr + x - 1) * 4;
+      const pNext = (rCurr + x + 1) * 4;
+      const pUp   = (rPrev + x) * 4;
+      const pDown = (rNext + x) * 4;
+
+      // Color Euclidean difference in X and Y
+      const dRx = src[pNext] - src[pPrev];
+      const dGx = src[pNext + 1] - src[pPrev + 1];
+      const dBx = src[pNext + 2] - src[pPrev + 2];
+      const gradX = Math.sqrt(dRx * dRx + dGx * dGx + dBx * dBx);
+
+      const dRy = src[pDown] - src[pUp];
+      const dGy = src[pDown + 1] - src[pUp + 1];
+      const dBy = src[pDown + 2] - src[pUp + 2];
+      const gradY = Math.sqrt(dRy * dRy + dGy * dGy + dBy * dBy);
+
+      // Diagonal components (crucial for AC unit corners, window borders and ceiling crown angles)
+      const pDiag1 = (rPrev + x - 1) * 4;
+      const pDiag2 = (rNext + x + 1) * 4;
+      const dRd1 = src[pDiag2] - src[pDiag1];
+      const dGd1 = src[pDiag2 + 1] - src[pDiag1 + 1];
+      const dBd1 = src[pDiag2 + 2] - src[pDiag1 + 2];
+      const gradD1 = Math.sqrt(dRd1 * dRd1 + dGd1 * dGd1 + dBd1 * dBd1) * 0.5;
+
+      const pDiag3 = (rPrev + x + 1) * 4;
+      const pDiag4 = (rNext + x - 1) * 4;
+      const dRd2 = src[pDiag4] - src[pDiag3];
+      const dGd2 = src[pDiag4 + 1] - src[pDiag3 + 1];
+      const dBd2 = src[pDiag4 + 2] - src[pDiag3 + 2];
+      const gradD2 = Math.sqrt(dRd2 * dRd2 + dGd2 * dGd2 + dBd2 * dBd2) * 0.5;
+
+      const totalGrad = (gradX + gradY + gradD1 + gradD2) * 0.58;
+      edges[rCurr + x] = Math.min(255, Math.round(totalGrad));
     }
   }
   return edges;
+}
+
+// Upward scan to detect horizontal crown molding / ceiling line
+function detectCeilingBoundary(startX, startY, w, h, edges) {
+  const maxCeilingY = Math.round(h * 0.35);
+  if (startY <= maxCeilingY) {
+    return 0; // Already in upper zone
+  }
+
+  // Scan vertically upward from startY
+  for (let y = startY - 8; y >= 6; y--) {
+    let edgeSum = 0;
+    let count = 0;
+    for (let dx = -14; dx <= 14; dx += 4) {
+      const nx = startX + dx;
+      if (nx >= 0 && nx < w) {
+        edgeSum += edges[y * w + nx];
+        count++;
+      }
+    }
+    const avgEdge = edgeSum / count;
+    if (avgEdge > 18 && y <= maxCeilingY) {
+      return y + 3; // Block anything at or above this molding line
+    }
+  }
+
+  return Math.round(h * 0.12);
 }
 
 // 3x3 Smoothing for anti-aliased natural paint boundaries
@@ -473,8 +542,8 @@ function smoothMask(mask, w, h) {
   return smoothed;
 }
 
-// Flood Fill from point bounded by sharp edge barriers
-function floodFillFromPoint(startX, startY, tolerance, targetMask) {
+// Flood Fill from point bounded by sharp edge barriers, bounding box & ceiling guard
+function floodFillFromPoint(startX, startY, tolerance, targetMask, boundingBox = null) {
   if (!originalImageData) return;
   const w = originalImageData.width;
   const h = originalImageData.height;
@@ -483,11 +552,29 @@ function floodFillFromPoint(startX, startY, tolerance, targetMask) {
   if (!targetMask) targetMask = new Uint8Array(w * h);
   if (!currentImageEdges) currentImageEdges = computeEdgeMap(originalImageData, w, h);
 
+  // Bounding box limits
+  let minX = 0, maxX = w - 1, minY = 0, maxY = h - 1;
+  if (boundingBox) {
+    minX = Math.max(0, Math.min(boundingBox.x1, boundingBox.x2));
+    maxX = Math.min(w - 1, Math.max(boundingBox.x1, boundingBox.x2));
+    minY = Math.max(0, Math.min(boundingBox.y1, boundingBox.y2));
+    maxY = Math.min(h - 1, Math.max(boundingBox.y1, boundingBox.y2));
+  }
+
+  // Ceiling cutoff
+  let ceilingLimitY = 0;
+  if (ceilingGuardEnabled && !boundingBox) {
+    ceilingLimitY = detectCeilingBoundary(startX, startY, w, h, currentImageEdges);
+  }
+
   const startIdx = (startY * w + startX) * 4;
   const seedR = src[startIdx];
   const seedG = src[startIdx + 1];
   const seedB = src[startIdx + 2];
   const seedLum = (seedR * 77 + seedG * 150 + seedB * 29) >> 8;
+
+  // Adaptive Edge Threshold: lower than before so even faint AC borders or molding lines stop fill
+  const edgeThreshold = Math.max(12, Math.min(22, Math.round(tolerance * 0.46)));
 
   // BFS Queue
   const queue = new Int32Array(w * h);
@@ -500,7 +587,7 @@ function floodFillFromPoint(startX, startY, tolerance, targetMask) {
   targetMask[startPos] = 255;
   queue[qEnd++] = startPos;
 
-  const maxPixels = Math.round(w * h * 0.70);
+  const maxPixels = Math.round(w * h * 0.85);
   let filledCount = 0;
 
   while (qStart < qEnd && filledCount < maxPixels) {
@@ -508,6 +595,10 @@ function floodFillFromPoint(startX, startY, tolerance, targetMask) {
     filledCount++;
     const cx = curr % w;
     const cy = Math.floor(curr / w);
+    const currIdx = curr * 4;
+    const cR = src[currIdx];
+    const cG = src[currIdx + 1];
+    const cB = src[currIdx + 2];
 
     const neighbors = [
       cy > 0 ? curr - w : -1,
@@ -521,8 +612,21 @@ function floodFillFromPoint(startX, startY, tolerance, targetMask) {
       if (n === -1 || visited[n]) continue;
       visited[n] = 1;
 
-      // Stop if hitting a strong edge (window frame, sofa contour, baseboard, molding)
-      if (currentImageEdges[n] > 26) {
+      const nx = n % w;
+      const ny = Math.floor(n / w);
+
+      // 1. Strict Bounding Box Constraint
+      if (boundingBox) {
+        if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+      }
+
+      // 2. Strict Ceiling Guard Barrier
+      if (ceilingGuardEnabled && !boundingBox && ny < ceilingLimitY) {
+        continue;
+      }
+
+      // 3. Strict Multi-channel Edge Barrier (AC unit casing, sofa seams, curtains, TV frame)
+      if (currentImageEdges[n] > edgeThreshold) {
         continue;
       }
 
@@ -532,13 +636,21 @@ function floodFillFromPoint(startX, startY, tolerance, targetMask) {
       const b = src[pIdx + 2];
       const lum = (r * 77 + g * 150 + b * 29) >> 8;
 
+      // Distance to initial seed point
       const dr = r - seedR;
       const dg = g - seedG;
       const db = b - seedB;
-      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+      const distToSeed = Math.sqrt(dr * dr + dg * dg + db * db);
+
+      // Local gradient to neighbor (prevents jumping over soft shadow transitions into different materials)
+      const sdr = r - cR;
+      const sdg = g - cG;
+      const sdb = b - cB;
+      const stepDist = Math.sqrt(sdr * sdr + sdg * sdg + sdb * sdb);
+
       const diffLum = Math.abs(lum - seedLum);
 
-      if (dist < tolerance * 1.85 && diffLum < tolerance * 1.5) {
+      if (distToSeed < tolerance * 1.35 && stepDist < tolerance * 0.82 && diffLum < tolerance * 1.25) {
         targetMask[n] = 255;
         queue[qEnd++] = n;
       }
@@ -548,7 +660,7 @@ function floodFillFromPoint(startX, startY, tolerance, targetMask) {
   return smoothMask(targetMask, w, h);
 }
 
-// Automatically detect main wall surfaces without touching furniture, floors or windows
+// Automatically detect main wall surfaces without touching furniture, floors, ceilings or appliances
 function autoDetectWalls() {
   if (!originalImageData) return;
   const w = originalImageData.width;
@@ -558,9 +670,9 @@ function autoDetectWalls() {
   const mask = new Uint8Array(w * h);
   const src = originalImageData.data;
 
-  // Probe candidates across upper and middle room zones
-  const candidateRows = [0.18, 0.28, 0.38, 0.48];
-  const candidateCols = [0.2, 0.35, 0.5, 0.65, 0.8];
+  // Safe middle-wall candidate coordinates (skip ceiling zone at top)
+  const candidateRows = ceilingGuardEnabled ? [0.28, 0.38, 0.48] : [0.18, 0.28, 0.38, 0.48];
+  const candidateCols = [0.22, 0.36, 0.5, 0.64, 0.78];
 
   for (let rFrac of candidateRows) {
     const y = Math.round(h * rFrac);
@@ -569,8 +681,20 @@ function autoDetectWalls() {
       const pos = y * w + x;
       const idx = pos * 4;
 
-      if (mask[pos] > 80) continue; // Already covered by a wall
-      if (currentImageEdges[pos] > 18) continue; // On an edge, skip
+      if (mask[pos] > 80) continue; // Already covered
+      if (currentImageEdges[pos] > 15) continue; // On an edge, skip
+
+      // Check local variance to avoid appliances (like AC vents or detailed paintings)
+      let localEdgeCount = 0;
+      for (let dy = -6; dy <= 6; dy += 3) {
+        for (let dx = -6; dx <= 6; dx += 3) {
+          const np = (y + dy) * w + (x + dx);
+          if (np >= 0 && np < w * h && currentImageEdges[np] > 20) {
+            localEdgeCount++;
+          }
+        }
+      }
+      if (localEdgeCount > 4) continue; // High variance = furniture or appliance, skip!
 
       const r = src[idx], g = src[idx + 1], b = src[idx + 2];
       const lum = (r * 77 + g * 150 + b * 29) >> 8;
@@ -578,7 +702,7 @@ function autoDetectWalls() {
       const sat = max === 0 ? 0 : (max - min) / max;
 
       // Typical neutral light wall properties
-      if (lum > 70 && lum < 248 && sat < 0.42) {
+      if (lum > 70 && lum < 246 && sat < 0.40) {
         floodFillFromPoint(x, y, currentTolerance, mask);
       }
     }
@@ -612,7 +736,7 @@ function renderMaskedPaint() {
 
     if (maskVal === 0) {
       // 100% UNTOUCHED ORIGINAL PIXEL!
-      // Sofas, wooden floors, windows, paintings, lamps stay completely pristine!
+      // Sofas, wooden floors, windows, paintings, air conditioners stay completely pristine!
       dst[pIdx]     = r;
       dst[pIdx + 1] = g;
       dst[pIdx + 2] = b;
@@ -653,38 +777,438 @@ function applyPaintToCanvas() {
 }
 
 // ==========================================================================
-// 9. Interactive Tap-to-Paint & Tolerance Controls
+// 9. Interactive Selective Wall Tools, Eraser & Pointer Engine
 // ==========================================================================
-function setupTapToPaint() {
-  // Attached via #interactive-tap-layer
+
+function setPaintTool(tool) {
+  currentPaintTool = tool;
+  paintTarget = tool;
+
+  // Update tabs
+  document.querySelectorAll('#paint-tools-nav .target-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tool === tool);
+  });
+
+  const layer = document.getElementById('interactive-tap-layer');
+  if (layer) layer.setAttribute('data-tool', tool);
+
+  const eraserControls = document.getElementById('eraser-controls-group');
+  const eraserCircle = document.getElementById('eraser-cursor-circle');
+  const hint = document.getElementById('tap-hint-pill');
+
+  if (tool === 'eraser') {
+    if (eraserControls) eraserControls.style.display = 'inline-flex';
+    if (hint) hint.textContent = '🧹 Klimaya, tavana veya koltuğa dokunarak tek tıkla boyayı temizleyin veya sürükleyerek silin';
+    showToast("🧹 Silgi aktif: Boyanan klimaya, koltuğa veya tavana dokunarak anında temizleyin");
+  } else {
+    if (eraserControls) eraserControls.style.display = 'none';
+    if (eraserCircle) eraserCircle.style.display = 'none';
+  }
+
+  if (tool === 'box') {
+    if (hint) hint.textContent = '📐 Duvarda boyamak istediğiniz alanı parmağınızla/fareyle kutu içine alın';
+    showToast("📐 Bölge Seç: Duvarda boyamak istediğiniz bölgenin etrafına kutu çizin");
+  } else if (tool === 'tap') {
+    if (hint) hint.textContent = '🎯 Boyamak istediğiniz duvara dokunun (Klima, tavan ve koltuk kenar bariyerleriyle korunur)';
+  } else if (tool === 'auto') {
+    if (hint) hint.textContent = '🪄 Odadaki duvarlar otomatik algılanıp boyandı';
+    autoDetectWalls();
+    renderMaskedPaint();
+    showToast("🪄 Odadaki duvarlar otomatik algılandı ve boyandı!");
+  }
 }
 
-function handleTapOnWall(e) {
-  if (isVideoMode) return;
+// Ceiling & Furniture Protection Toggle
+function toggleCeilingGuard() {
+  ceilingGuardEnabled = !ceilingGuardEnabled;
+  const btn = document.getElementById('btn-ceiling-guard');
+  const txt = document.getElementById('guard-text');
+  if (btn && txt) {
+    if (ceilingGuardEnabled) {
+      btn.classList.remove('disabled');
+      btn.classList.add('active');
+      txt.textContent = 'Tavanı Koru: AÇIK';
+      showToast("🛡️ Tavan koruması aktif: Tavan ve kartonpiyerler kesinlikle boyanmaz");
+    } else {
+      btn.classList.remove('active');
+      btn.classList.add('disabled');
+      txt.textContent = 'Tavanı Koru: KAPALI';
+      showToast("⚠️ Tavan koruması kapatıldı");
+    }
+  }
+}
+
+// Eraser brush size setter
+function setEraserBrushSize(size) {
+  eraserBrushSize = parseInt(size, 10) || 30;
+  document.querySelectorAll('.btn-brush-size').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.size, 10) === eraserBrushSize);
+  });
+  const eraserCircle = document.getElementById('eraser-cursor-circle');
+  if (eraserCircle) {
+    eraserCircle.style.width = `${eraserBrushSize * 2}px`;
+    eraserCircle.style.height = `${eraserBrushSize * 2}px`;
+  }
+}
+
+// Smart tap-to-unpaint: single tap on AC or sofa clears that entire connected object!
+function unpaintAtPoint(clickX, clickY) {
+  if (!originalImageData || !activeWallMask) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+  const src = originalImageData.data;
+
+  let seedPos = clickY * w + clickX;
+  if (activeWallMask[seedPos] === 0) {
+    // If clicked on border, find nearest painted pixel within 14px
+    for (let r = 1; r <= 14; r += 2) {
+      let found = false;
+      for (let dy = -r; dy <= r; dy += 2) {
+        for (let dx = -r; dx <= r; dx += 2) {
+          const nx = clickX + dx;
+          const ny = clickY + dy;
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+            const p = ny * w + nx;
+            if (activeWallMask[p] > 0) {
+              seedPos = p;
+              found = true;
+              break;
+            }
+          }
+        }
+        if (found) break;
+      }
+      if (found) break;
+    }
+  }
+
+  if (activeWallMask[seedPos] === 0) {
+    showToast("ℹ️ Bu noktada silinecek boya bulunmuyor.");
+    return;
+  }
+
+  const seedIdx = seedPos * 4;
+  const seedR = src[seedIdx];
+  const seedG = src[seedIdx + 1];
+  const seedB = src[seedIdx + 2];
+
+  const queue = new Int32Array(w * h);
+  let qStart = 0;
+  let qEnd = 0;
+  const visited = new Uint8Array(w * h);
+
+  visited[seedPos] = 1;
+  activeWallMask[seedPos] = 0;
+  queue[qEnd++] = seedPos;
+
+  let clearedCount = 0;
+  while (qStart < qEnd) {
+    const curr = queue[qStart++];
+    clearedCount++;
+    const cx = curr % w;
+    const cy = Math.floor(curr / w);
+
+    const neighbors = [
+      cy > 0 ? curr - w : -1,
+      cy < h - 1 ? curr + w : -1,
+      cx > 0 ? curr - 1 : -1,
+      cx < w - 1 ? curr + 1 : -1
+    ];
+
+    for (let i = 0; i < 4; i++) {
+      const n = neighbors[i];
+      if (n === -1 || visited[n]) continue;
+      visited[n] = 1;
+
+      if (activeWallMask[n] > 0) {
+        // Stop at strong outer edge separating object from wall
+        if (currentImageEdges && currentImageEdges[n] > 18) {
+          activeWallMask[n] = 0;
+          continue;
+        }
+
+        const pIdx = n * 4;
+        const dr = src[pIdx] - seedR;
+        const dg = src[pIdx + 1] - seedG;
+        const db = src[pIdx + 2] - seedB;
+        const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+        if (dist < 85) {
+          activeWallMask[n] = 0;
+          queue[qEnd++] = n;
+        }
+      }
+    }
+  }
+
+  renderMaskedPaint();
+  showToast("🧹 Klima/Eşya üzerindeki boya başarıyla temizlendi!");
+}
+
+// Drag Eraser Brush
+function eraseBrush(centerX, centerY, radius) {
+  if (!activeWallMask || !originalImageData) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+  const r2 = radius * radius;
+
+  const minX = Math.max(0, centerX - radius);
+  const maxX = Math.min(w - 1, centerX + radius);
+  const minY = Math.max(0, centerY - radius);
+  const maxY = Math.min(h - 1, centerY + radius);
+
+  let erased = false;
+  for (let y = minY; y <= maxY; y++) {
+    const row = y * w;
+    for (let x = minX; x <= maxX; x++) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      if (dx * dx + dy * dy <= r2) {
+        const pos = row + x;
+        if (activeWallMask[pos] > 0) {
+          activeWallMask[pos] = 0;
+          erased = true;
+        }
+      }
+    }
+  }
+  if (erased) renderMaskedPaint();
+}
+
+// Paint only inside the user's dragged bounding box
+function paintSelectedRegion() {
+  if (!selectionBox || !originalImageData) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+
+  const minX = Math.max(0, Math.min(selectionBox.x1, selectionBox.x2));
+  const maxX = Math.min(w - 1, Math.max(selectionBox.x1, selectionBox.x2));
+  const minY = Math.max(0, Math.min(selectionBox.y1, selectionBox.y2));
+  const maxY = Math.min(h - 1, Math.max(selectionBox.y1, selectionBox.y2));
+
+  if (maxX - minX < 15 || maxY - minY < 15) {
+    showToast("⚠️ Lütfen biraz daha geniş bir duvar alanı seçin.");
+    return;
+  }
+
+  if (!activeWallMask) activeWallMask = new Uint8Array(w * h);
+
+  // Probe seed point inside box avoiding edges
+  let bestX = Math.round((minX + maxX) / 2);
+  let bestY = Math.round((minY + maxY) / 2);
+
+  if (currentImageEdges && currentImageEdges[bestY * w + bestX] > 18) {
+    // Find nearby clean spot
+    for (let dy = -10; dy <= 10; dy += 4) {
+      for (let dx = -10; dx <= 10; dx += 4) {
+        const nx = bestX + dx;
+        const ny = bestY + dy;
+        if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) {
+          if (currentImageEdges[ny * w + nx] < 15) {
+            bestX = nx;
+            bestY = ny;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  floodFillFromPoint(bestX, bestY, currentTolerance, activeWallMask, selectionBox);
+  renderMaskedPaint();
+
+  cancelSelection();
+  showToast(`✨ Seçtiğiniz duvar alanı ${currentSelectedColor.code} ile boyandı!`);
+}
+
+function cancelSelection() {
+  selectionBox = null;
+  isBoxSelecting = false;
+  boxDragStart = null;
+  const marquee = document.getElementById('selection-marquee');
+  const actionBubble = document.getElementById('selection-action-bubble');
+  if (marquee) marquee.style.display = 'none';
+  if (actionBubble) actionBubble.style.display = 'none';
+}
+
+function clearPaintedWalls() {
+  if (!canvas || !originalImageData) return;
+  const w = originalImageData.width;
+  const h = originalImageData.height;
+  activeWallMask = new Uint8Array(w * h);
+  cancelSelection();
+  renderMaskedPaint();
+  showToast("🧹 Boyanmış duvarlar sıfırlandı. Orijinal odaya dönüldü.");
+}
+
+function updateTolerance(val) {
+  currentTolerance = parseInt(val, 10) || 30;
+  const valEl = document.getElementById('tolerance-val');
+  if (valEl) valEl.textContent = currentTolerance;
+}
+
+// Unified Pointer & Touch Event Setup for interactive-tap-layer
+function setupTapToPaint() {
+  const layer = document.getElementById('interactive-tap-layer');
   const canvas = document.getElementById('canvas-painted');
   const viewport = document.getElementById('canvas-viewport');
-  if (!canvas || !viewport || !originalImageData) return;
+  const marquee = document.getElementById('selection-marquee');
+  const actionBubble = document.getElementById('selection-action-bubble');
+  const eraserCircle = document.getElementById('eraser-cursor-circle');
 
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  if (!layer || !canvas || !viewport) return;
 
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  function getCanvasCoords(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = Math.round((clientX - rect.left) * scaleX);
+    const y = Math.round((clientY - rect.top) * scaleY);
+    const vRect = viewport.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(canvas.width - 1, x)),
+      y: Math.max(0, Math.min(canvas.height - 1, y)),
+      viewportX: clientX - vRect.left,
+      viewportY: clientY - vRect.top
+    };
+  }
 
-  const clickX = Math.round((clientX - rect.left) * scaleX);
-  const clickY = Math.round((clientY - rect.top) * scaleY);
+  let pointerDownPos = null;
+  let hasMoved = false;
 
-  if (clickX < 0 || clickX >= canvas.width || clickY < 0 || clickY >= canvas.height) return;
+  layer.addEventListener('pointerdown', (e) => {
+    if (isVideoMode || !originalImageData) return;
+    try {
+      layer.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    pointerDownPos = { clientX: e.clientX, clientY: e.clientY };
+    hasMoved = false;
 
-  createTapRipple(clientX - viewport.getBoundingClientRect().left, clientY - viewport.getBoundingClientRect().top);
+    const coords = getCanvasCoords(e.clientX, e.clientY);
 
-  if (!activeWallMask) activeWallMask = new Uint8Array(canvas.width * canvas.height);
+    if (currentPaintTool === 'box') {
+      isBoxSelecting = true;
+      boxDragStart = coords;
+      if (actionBubble) actionBubble.style.display = 'none';
+      if (marquee) {
+        marquee.style.display = 'block';
+        marquee.style.left = `${coords.viewportX}px`;
+        marquee.style.top = `${coords.viewportY}px`;
+        marquee.style.width = '0px';
+        marquee.style.height = '0px';
+      }
+    } else if (currentPaintTool === 'eraser') {
+      isErasing = true;
+      if (eraserCircle) {
+        eraserCircle.style.display = 'block';
+        eraserCircle.style.width = `${eraserBrushSize * 2}px`;
+        eraserCircle.style.height = `${eraserBrushSize * 2}px`;
+        eraserCircle.style.left = `${coords.viewportX}px`;
+        eraserCircle.style.top = `${coords.viewportY}px`;
+      }
+      eraseBrush(coords.x, coords.y, eraserBrushSize);
+    }
+  });
 
-  // If in 'tap' mode, flood fill from clicked point and combine
-  floodFillFromPoint(clickX, clickY, currentTolerance, activeWallMask);
-  renderMaskedPaint();
-  showToast(`🎯 Duvar seçildi ve ${currentSelectedColor.code} ile boyandı!`);
+  layer.addEventListener('pointermove', (e) => {
+    if (isVideoMode || !originalImageData) return;
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+
+    if (pointerDownPos) {
+      const dist = Math.hypot(e.clientX - pointerDownPos.clientX, e.clientY - pointerDownPos.clientY);
+      if (dist > 5) hasMoved = true;
+    }
+
+    if (currentPaintTool === 'eraser') {
+      if (eraserCircle) {
+        eraserCircle.style.display = 'block';
+        eraserCircle.style.width = `${eraserBrushSize * 2}px`;
+        eraserCircle.style.height = `${eraserBrushSize * 2}px`;
+        eraserCircle.style.left = `${coords.viewportX}px`;
+        eraserCircle.style.top = `${coords.viewportY}px`;
+      }
+      if (isErasing) {
+        eraseBrush(coords.x, coords.y, eraserBrushSize);
+      }
+    } else if (currentPaintTool === 'box' && isBoxSelecting && boxDragStart) {
+      const x1 = Math.min(boxDragStart.viewportX, coords.viewportX);
+      const y1 = Math.min(boxDragStart.viewportY, coords.viewportY);
+      const w = Math.abs(coords.viewportX - boxDragStart.viewportX);
+      const h = Math.abs(coords.viewportY - boxDragStart.viewportY);
+
+      if (marquee) {
+        marquee.style.display = 'block';
+        marquee.style.left = `${x1}px`;
+        marquee.style.top = `${y1}px`;
+        marquee.style.width = `${w}px`;
+        marquee.style.height = `${h}px`;
+      }
+
+      const label = document.getElementById('selection-label');
+      if (label) {
+        const canW = Math.abs(coords.x - boxDragStart.x);
+        const canH = Math.abs(coords.y - boxDragStart.y);
+        label.textContent = `Seçilen Duvar: ${canW} × ${canH} px`;
+      }
+    }
+  });
+
+  const handlePointerEnd = (e) => {
+    if (isVideoMode || !originalImageData) return;
+    try {
+      layer.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+
+    if (currentPaintTool === 'tap') {
+      if (!hasMoved) {
+        createTapRipple(coords.viewportX, coords.viewportY);
+        if (!activeWallMask) activeWallMask = new Uint8Array(canvas.width * canvas.height);
+        floodFillFromPoint(coords.x, coords.y, currentTolerance, activeWallMask);
+        renderMaskedPaint();
+        showToast(`🎯 Duvar seçildi ve ${currentSelectedColor.code} ile boyandı!`);
+      }
+    } else if (currentPaintTool === 'eraser') {
+      isErasing = false;
+      if (!hasMoved) {
+        // Single tap with eraser on an appliance/sofa/ceiling: smart unpaint!
+        unpaintAtPoint(coords.x, coords.y);
+      }
+    } else if (currentPaintTool === 'box' && isBoxSelecting) {
+      isBoxSelecting = false;
+      if (boxDragStart) {
+        const canX1 = Math.min(boxDragStart.x, coords.x);
+        const canX2 = Math.max(boxDragStart.x, coords.x);
+        const canY1 = Math.min(boxDragStart.y, coords.y);
+        const canY2 = Math.max(boxDragStart.y, coords.y);
+
+        if (canX2 - canX1 > 20 && canY2 - canY1 > 20) {
+          selectionBox = { x1: canX1, y1: canY1, x2: canX2, y2: canY2 };
+          if (actionBubble) {
+            const centerX = Math.min(boxDragStart.viewportX, coords.viewportX) + Math.abs(coords.viewportX - boxDragStart.viewportX) / 2;
+            const topY = Math.min(boxDragStart.viewportY, coords.viewportY);
+            actionBubble.style.left = `${centerX}px`;
+            actionBubble.style.top = `${Math.max(50, topY - 10)}px`;
+            actionBubble.style.display = 'flex';
+          }
+        } else {
+          cancelSelection();
+        }
+      }
+    }
+
+    pointerDownPos = null;
+    hasMoved = false;
+  };
+
+  layer.addEventListener('pointerup', handlePointerEnd);
+  layer.addEventListener('pointercancel', handlePointerEnd);
+  layer.addEventListener('pointerleave', () => {
+    if (eraserCircle && currentPaintTool === 'eraser' && !isErasing) {
+      eraserCircle.style.display = 'none';
+    }
+  });
 }
 
 function createTapRipple(x, y) {
@@ -699,33 +1223,6 @@ function createTapRipple(x, y) {
   box.appendChild(ripple);
 
   setTimeout(() => ripple.remove(), 700);
-}
-
-function setPaintTarget(target) {
-  paintTarget = target;
-  document.querySelectorAll('.target-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.target === target);
-  });
-
-  const hint = document.getElementById('tap-hint-pill');
-  if (target === 'auto') {
-    if (hint) hint.textContent = '🪄 Odadaki tüm duvarlar otomatik algılanıp boyandı';
-    autoDetectWalls();
-    renderMaskedPaint();
-    showToast("🪄 Odadaki tüm duvarlar otomatik algılandı ve boyandı!");
-  } else if (target === 'tap') {
-    if (hint) hint.textContent = '🎯 Boyamak istediğiniz duvara veya tavana dokunun (Eşyalar boyanmaz)';
-    showToast("🎯 Resimde boyamak istediğiniz duvara dokunun");
-  }
-}
-
-function clearPaintedWalls() {
-  if (!canvas || !originalImageData) return;
-  const w = originalImageData.width;
-  const h = originalImageData.height;
-  activeWallMask = new Uint8Array(w * h);
-  renderMaskedPaint();
-  showToast("🧹 Boyanmış duvarlar sıfırlandı. İstediğiniz duvara dokunup boyayabilirsiniz.");
 }
 
 function updateTolerance(val) {
@@ -1057,8 +1554,13 @@ window.loadDemoRoom = loadDemoRoom;
 window.selectColor = selectColor;
 window.filterCategory = filterCategory;
 window.filterPalette = filterPalette;
-window.setPaintTarget = setPaintTarget;
-window.handleTapOnWall = handleTapOnWall;
+window.setPaintTool = setPaintTool;
+window.setPaintTarget = setPaintTool; // backwards compatibility alias
+window.toggleCeilingGuard = toggleCeilingGuard;
+window.setEraserBrushSize = setEraserBrushSize;
+window.paintSelectedRegion = paintSelectedRegion;
+window.cancelSelection = cancelSelection;
+window.unpaintAtPoint = unpaintAtPoint;
 window.clearPaintedWalls = clearPaintedWalls;
 window.updateTolerance = updateTolerance;
 window.toggleSplitComparison = toggleSplitComparison;
@@ -1067,4 +1569,5 @@ window.downloadPaintedPhoto = downloadPaintedPhoto;
 window.shareOnWhatsApp = shareOnWhatsApp;
 window.openRenomateCalc = openRenomateCalc;
 window.toggleInfoModal = toggleInfoModal;
+
 
